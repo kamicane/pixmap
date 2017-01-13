@@ -10,6 +10,8 @@ const blend = require('./lib/blend')
 const INTERPOLATION = require('./lib/resize')
 const MIME = require('./mime-types.json')
 
+INTERPOLATION.nearest = require('./lib/nearest-neighbor')
+
 const readFile = pify(fs.readFile)
 const writeFile = pify(fs.writeFile)
 
@@ -17,15 +19,15 @@ const writeFile = pify(fs.writeFile)
 function bitblt (srcData, srcWidth, dstData, dstWidth, srcX, srcY, width, height, deltaX, deltaY) {
   for (let y = 0; y < height; y++) {
     srcData.copy(dstData,
-      ((deltaY + y) * dstWidth + deltaX) << 2,
-      ((srcY + y) * srcWidth + srcX) << 2,
-      ((srcY + y) * srcWidth + srcX + width) << 2
+      ((deltaY + y) * dstWidth + deltaX) * 4,
+      ((srcY + y) * srcWidth + srcX) * 4,
+      ((srcY + y) * srcWidth + srcX + width) * 4
     )
   }
 }
 
-const ALLOC_UNSAFE = {}
 const AUTO = {}
+const ALLOC_UNSAFE = {}
 
 class PixMap {
 
@@ -49,15 +51,14 @@ class PixMap {
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        let idx = (w * y + x) << 2
+        let idx = (w * y + x) * 4
         yield { x, y, color: data.slice(idx, idx + 4) }
       }
     }
   }
 
   * rect (sx = 0, sy = 0, width = this.width, height = this.height) {
-    // CLAMP HERE
-
+    // todo: CLAMP
     const w = this.width
     const ex = sx + width
     const ey = sy + height
@@ -65,40 +66,53 @@ class PixMap {
 
     for (let y = sy; y < ey; y++) {
       for (let x = sx; x < ex; x++) {
-        let idx = (w * y + x) << 2
+        let idx = (w * y + x) * 4
         yield { x, y, color: data.slice(idx, idx + 4) }
       }
     }
   }
 
   crop (sx, sy, width, height) {
-    // CLAMP HERE
+    // todo: CLAMP
     const pix = new PixMap(width, height, ALLOC_UNSAFE)
     bitblt(this.data, this.width, pix.data, pix.width, sx, sy, width, height, 0, 0)
     return pix
   }
 
   mask (src, dx, dy) {
-    dx |= 0
-    dy |= 0
+    // dx |= 0
+    // dy |= 0
 
-    for (let { x, y, color } in src.rect(0, 0, this.width - dx, this.height - dy)) {
-      let avg = (color[0] + color[1] + color[2]) / 3
-      let f = avg / 255
-      let dest = this.getPixel(dx + x, dy + y)
-      dest[3] *= f
-    }
-    return this
+    // for (let { x, y, color } of src.rect(0, 0, this.width - dx, this.height - dy)) {
+    //   let avg = (color[0] + color[1] + color[2]) / 3
+    //   let f = avg / 255
+    //   let dest = this.getPixel(dx + x, dy + y)
+    //   dest[3] *= f
+    // }
+    // return this
   }
 
-  getPixel (x, y) {
-    x |= 0
-    y |= 0
+  getPixelIndex (x, y) {
+    x = Math.round(x)
+    y = Math.round(y)
 
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null
 
-    let idx = (this.width * y + x) << 2
+    return (this.width * y + x) * 4
+  }
+
+  getPixel (x, y) {
+    let idx = this.getPixelIndex(x, y)
+    if (idx == null) return null
     return this.data.slice(idx, idx + 4)
+  }
+
+  getLine (y) {
+    y = Math.round(y)
+    if (y < 0 || y >= this.height) return null
+
+    let idx = (this.width * y) * 4
+    return this.data.slice(idx, idx + (this.width * 4))
   }
 
   clone () {
@@ -107,13 +121,23 @@ class PixMap {
     return pix
   }
 
-  compose (pix, sx, sy, blendMode) {
-    sx |= 0
-    sy |= 0
+  compose (pix, dx, dy, blendMode, amount) {
+    // todo: CLAMP
+    dx = Math.round(dx)
+    dy = Math.round(dy)
 
-    for (let { x, y, color } of this.rect(sx, sy, pix.width, pix.height)) {
-      let addColor = pix.getPixel(x - sx, y - sy)
-      blend(addColor, color, blendMode || blend.MODES.normal)
+    if (!blendMode) blendMode = blend.MODES.normal
+
+    // todo: CLAMP
+    const w = pix.width
+    const h = pix.height
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let delta1 = pix.getPixelIndex(x, y)
+        let delta2 = this.getPixelIndex(dx + x, dy + y)
+        blend(pix.data, this.data, blendMode, amount, delta1, delta2)
+      }
     }
 
     return this
