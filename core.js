@@ -5,9 +5,10 @@ const fs = require('fs')
 const pify = require('pify')
 const readChunk = require('read-chunk')
 const fileType = require('file-type')
-const stackBlur = require('./stack-blur')
-const blend = require('./blend')
-const INTERPOLATION = require('./resize')
+const stackBlur = require('./lib/stack-blur')
+const blend = require('./lib/blend')
+const INTERPOLATION = require('./lib/resize')
+const MIME = require('./mime-types.json')
 
 const readFile = pify(fs.readFile)
 const writeFile = pify(fs.writeFile)
@@ -29,8 +30,6 @@ const AUTO = {}
 class PixMap {
 
   constructor (width, height, fill) {
-    if (!(this instanceof PixMap)) return new PixMap(width, height, fill)
-
     this.width = width | 0
     this.height = height | 0
 
@@ -145,43 +144,28 @@ class PixMap {
 
   toBuffer (mime, options) {
     const encoder = ENCODER[mime]
-    return Promise.resolve().then(() => {
+    return Promise.resolve()
+    .then(() => {
       if (encoder) return encoder(this.width, this.height, this.data, options)
       throw new EncodeError(mime)
     })
   }
 
   toFile (mime, path, options) {
-    return this.toBuffer(mime, options).then((buffer) => {
+    return this.toBuffer(mime, options)
+    .then((buffer) => {
       return writeFile(path, buffer)
     })
   }
 
 }
 
-// ENCODE / DECODE api
-
-const ENCODER = PixMap.ENCODER = {}
-const DECODER = PixMap.DECODER = {}
-
-PixMap.register = (mime, { encode, decode }) => {
-  if (encode) ENCODER[mime] = encode
-  if (decode) DECODER[mime] = decode
-  return this
-}
-
-function getMimeDecoder (chunk) {
+function getMime (chunk) {
   let type = fileType(chunk)
   if (type) {
-    let mime = type.mime
-    let decoder = DECODER[mime]
-    return [ mime, decoder ]
-  } else { // try xml/svg
-    if ((/^\s+?<svg|<xml/).test(chunk.toString())) {
-      let mime = 'image/svg'
-      let decoder = DECODER[mime]
-      return [ mime, decoder ]
-    }
+    return type.mime
+  } else if ((/^\s+?<svg|<xml/).test(chunk.toString())) { // try xml/svg
+    return 'image/svg'
   }
   throw new Error('unknown mime-type')
 }
@@ -202,11 +186,36 @@ class DecodeError extends TypeError {
   }
 }
 
+class BufferError extends TypeError {
+  constructor (buffer) {
+    super()
+    this.name = 'NOT_A_BUFFER'
+    this.message = `${buffer} must be a buffer.`
+  }
+}
+
+function pixMap () {
+  return new PixMap(...arguments)
+}
+
+// ENCODE / DECODE api
+
+const ENCODER = pixMap.ENCODER = {}
+const DECODER = pixMap.DECODER = {}
+
+pixMap.register = (codecs) => {
+  for (let mime in codecs) {
+    let codec = codecs[mime]
+    if (codec.encode) ENCODER[mime] = codec.encode
+    if (codec.decode) DECODER[mime] = codec.decode
+  }
+}
+
 // parse result of decoders and create a PixMap object
 // or use this to create a pixmap object from non-file sources unknown to pixmap (Canvas ?)
-PixMap.raw = function (width, height, data) {
-  if (!Buffer.isBuffer(data)) throw new TypeError(`${data} must be a buffer`)
-  if (data.length !== width * height * 4) throw new Error(`invalid buffer`)
+pixMap.raw = function (width, height, data) {
+  if (!Buffer.isBuffer(data)) throw new BufferError(data)
+  if (data.length !== width * height * 4) throw new Error(`invalid buffer, must be 32bpp`)
 
   const pix = new PixMap()
   pix.width = width
@@ -215,46 +224,63 @@ PixMap.raw = function (width, height, data) {
   return pix
 }
 
-// use this to create a PixMap object from buffers you get from files
-PixMap.fromBuffer = function (buffer, options) {
-  if (!Buffer.isBuffer(buffer)) throw new TypeError(`${buffer} must be a buffer`)
+function createRaw ({ width, height, data }) { // for promises
+  return pixMap.raw(width, height, data)
+}
+
+pixMap.loadBufferAs = function (mime, buffer, options) {
   // always return a promise.
   // this way, decoder might return a promise, or it might be sync, and we don't care.
-  return Promise.resolve().then(() => {
-    let [ mime, decoder ] = getMimeDecoder(buffer.slice(0, 4100))
-    if (decoder) return decoder(buffer, options)
-    throw new DecodeError(mime)
-  }).then(({ width, height, data }) => PixMap.raw(width, height, data))
+  return Promise.resolve()
+  .then(() => {
+    if (!Buffer.isBuffer(buffer)) throw new BufferError(buffer)
+    let decoder = DECODER[mime]
+    if (!decoder) throw new DecodeError(mime)
+    return decoder(buffer, options)
+  })
+  .then(createRaw)
+}
+
+// use this to create a PixMap object from buffers you get from files
+pixMap.loadBuffer = function (buffer, options) {
+  // always return a promise.
+  // this way, decoder might return a promise, or it might be sync, and we don't care.
+  return Promise.resolve()
+  .then(() => {
+    if (!Buffer.isBuffer(buffer)) throw new BufferError(buffer)
+    let mime = getMime(buffer.slice(0, 4100))
+    return pixMap.loadBufferAs(mime, buffer, options)
+  })
+}
+
+pixMap.loadFileAs = function (mime, file, options) {
+  let decoder
+  return Promise.resolve()
+  .then(() => {
+    decoder = DECODER[mime]
+    if (!decoder) throw new DecodeError(mime)
+    return readFile(file)
+  })
+  .then((buffer) => decoder(buffer, options))
+  .then(createRaw)
 }
 
 // use this to create a PixMap object from files
-PixMap.fromFile = function (file, options) {
-  let mime, decoder
-
-  return readChunk(file, 0, 4100).then((chunk) => {
-    [ mime, decoder ] = getMimeDecoder(chunk)
-    if (!decoder) throw new DecodeError(mime)
-    return readFile(file)
-  }).then((buffer) => {
-    return decoder(buffer, options)
-  }).then(({ width, height, data }) => PixMap.raw(width, height, data))
+pixMap.loadFile = function (file, options) {
+  return readChunk(file, 0, 4100)
+  .then((chunk) => {
+    let mime = getMime(chunk)
+    return pixMap.loadFileAs(mime, file, options)
+  })
 }
 
 // convenience constants
+pixMap.MIME = MIME
+pixMap.BLEND = blend.MODES
+pixMap.INTERPOLATION = INTERPOLATION
+pixMap.ALLOC_UNSAFE = ALLOC_UNSAFE
+pixMap.AUTO = AUTO
 
-PixMap.MIME = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  bmp: 'image/bpm',
-  tiff: 'image/tiff',
-  webp: 'image/webp',
-  svg: 'image/svg'
-}
+pixMap.PixMap = PixMap
 
-PixMap.BLEND = blend.MODES
-PixMap.INTERPOLATION = INTERPOLATION
-PixMap.ALLOC_UNSAFE = ALLOC_UNSAFE
-PixMap.AUTO = AUTO
-
-module.exports = PixMap
+module.exports = pixMap

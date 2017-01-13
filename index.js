@@ -1,3 +1,6 @@
 'use strict'
 
-module.exports = require('./lib/pixmap')
+const core = require('./core')
+core.register(require('./io/sharp'))
+
+module.exports = core

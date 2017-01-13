@@ -1,20 +1,20 @@
 'use strict'
 
-const PixMap = require('../lib/pixmap')
 const sharp = require('sharp')
-
-const decodeTypes = [] // array of supported mime types for decoding (['png', 'jpg'])
-const encodeTypes = {} // object of supported mime types to id for encoding ({'image/png': 'png'})
+const MIME = require('../mime-types.json')
 
 const SHARP_FORMATS = sharp.format
-
-const MIME = PixMap.MIME
 
 for (let id in MIME) { // cross reference with PixMap known mimes to get valid mime-types
   let format = SHARP_FORMATS[id]
   if (!format) continue // continue if there is no such type in sharp (should always be there)
-  if (format.input.buffer) decodeTypes.push(MIME[id])
-  if (format.output.buffer) encodeTypes[MIME[id]] = id
+
+  const codec = {}
+  if (format.input.buffer) codec.decode = decoder
+  if (format.output.buffer) codec.encode = createEncoder(id)
+
+  let mime = MIME[id]
+  if (codec.encode || codec.decode) exports[mime] = codec // export the codec
 }
 
 function decoder (buffer) {
@@ -48,8 +48,3 @@ function createEncoder (type) {
     })
   }
 }
-
-for (let mime of decodeTypes) PixMap.DECODER[mime] = decoder
-for (let mime in encodeTypes) PixMap.ENCODER[mime] = createEncoder(encodeTypes[mime])
-
-module.exports = PixMap

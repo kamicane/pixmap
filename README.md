@@ -5,10 +5,9 @@
 PixMap is a pixel manipulation library.
 It supports compositing pixmaps with SVG blending modes, resizing, blurring, cropping, masking, and, of course, direct pixel manipulation.
 
-PixMap works by delegating decoding and encoding image formats to third parties.
-[sharp](https://github.com/lovell/sharp) and [pngjs](https://github.com/lukeapage/pngjs) are both natively supported by requiring their relative io modules.
+PixMap works by delegating decoding and encoding image formats to third parties like [sharp](https://github.com/lovell/sharp) or [pngjs](https://github.com/lukeapage/pngjs).
 
-All buffer allocations are kept to a minimum. allocUnsafe is always used when pixels are going to get filled.
+All buffer allocations are kept to a minimum. `allocUnsafe` is always used when pixels are going to get filled.
 
 NO BUFFERS WERE HARMED IN THE MAKING OF THIS JAVASCRIPT PROGRAM.
 
@@ -34,33 +33,31 @@ const PixMap = require('pixmap')
 
 ```js
 let pix = PixMap(100, 100) // 100x100 transparent
-let pix = PixMap(100, 100, 0xff) // 100x100 white
-let pix = PixMap(100, 100, 0x00) // 100x100 black
+let pix = PixMap(100, 100, Buffer.from([255, 255, 255, 255])) // 100x100 white
+let pix = PixMap(100, 100, Buffer.from([0, 0, 0, 255])) // 100x100 black
 ```
 
 ## I/O
 
-Using provided encoders and decoders
+By default, `require('pixmap')` will give you PixMap with sharp codecs enabled (png, svg, jpeg, tiff, etc).
+Supported sharp codecs are automatically calculated at runtime using [`sharp.format`](http://sharp.dimens.io/en/stable/api-constructor/#format).
 ```js
 const PixMap = require('pixmap')
-require('pixmap/io/sharp') // adds codecs for png, svg, jpeg, tiff, etc.
-// equivalent to
-const PixMap = require('pixmap/io/sharp')
-
-// alternatively
-require('pixmap/io/pngjs') // adds codecs for png (no gyp required)
-require('pixmap/io/jpeg-js') // adds codecs for jpeg (no gyp required)
 ```
 
-Supported sharp codecs are automatically calculated at runtime using [`sharp.format`](http://sharp.dimens.io/en/stable/api-constructor/#format).
+Should you want to load codecs manually (for browser usage):
+```js
+const PixMap = require('pixmap/core')
+// register codecs manually
+PixMap.register(require('pixmap/io/pngjs')) // adds codecs for png (no gyp required)
+PixMap.register(require('pixmap/io/jpeg-js')) // adds codecs for jpeg (no gyp required)
+```
 
-After requiring the desired codecs you can use the following promise-based API:
-
-### I
+### Input
 
 Reading from files
 ```js
-PixMap.fromFile('./path/to/image.png').then((pix) => {
+PixMap.loadFile('./path/to/image.png').then((pix) => {
   //...
 })
 ```
@@ -68,7 +65,7 @@ PixMap.fromFile('./path/to/image.png').then((pix) => {
 Reading from buffers
 ```js
 fs.readFile('./path/to/image.png', (buffer) => {
-  PixMap.fromBuffer(buffer).then((pix) => {
+  PixMap.loadBuffer(buffer).then((pix) => {
     //...
   })
 })
@@ -83,30 +80,30 @@ let pix = PixMap.raw(width, height, buffer)
 for example:
 ```js
 let canvasBuffer = Buffer.from(ctx.getImageData(0, 0, canvas.width, canvas.height))
-let pix = Pixmap.raw(canvas.width, canvas.height, canvasBuffer)
+let pix = PixMap.raw(canvas.width, canvas.height, canvasBuffer)
 ```
 
-### O
+### Output
 
 Saving to a file. Refer to the library documentation for their options.
 ```js
-PixMap.toFile('image/png', './path/to/image.png', {/* options */}).then(() => {
+pix.toFile('image/png', './path/to/image.png', {/* options */}).then(() => {
   console.log('done')
 })
 ```
 
 Saving to a coded buffer. Refer to the library documentation for their options.
 ```js
-PixMap.toBuffer('image/png', {/* options */}).then((buffer) => {
+pix.toBuffer('image/png', {/* options */}).then((buffer) => {
   fs.writeFile('./path/to/image.png', buffer, () => {
     //..
   })
 })
 ```
 
-For consistency, `fromBuffer` / `toBuffer` always return promises, even if the implemented codec behaves in a syncronous manner.
+For consistency, `loadBuffer` / `toBuffer` always return promises, even if the implemented codec behaves in a syncronous manner.
 
-convenience OBJECT for mime-types
+Convenience constants provided for mime-types
 ```js
 PixMap.MIME.png  === 'image/png'
 PixMap.MIME.jpeg === 'image/jpeg'

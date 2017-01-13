@@ -1,10 +1,9 @@
 'use strict'
 
-const PixMap = require('../lib/pixmap')
 const PNG = require('pngjs').PNG
 const raw = require('raw-body')
 
-PixMap.register(PixMap.MIME.png, {
+exports['image/png'] = {
 
   decode (buffer) {
     return new Promise((resolve, reject) => {
@@ -30,6 +29,4 @@ PixMap.register(PixMap.MIME.png, {
     return raw(png.pack())
   }
 
-})
-
-module.exports = PixMap
+}
