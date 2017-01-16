@@ -1,142 +1,247 @@
 'use strict'
 // inspired by Jimp, imagejs
 
-const fs = require('fs')
-const pify = require('pify')
-const readChunk = require('read-chunk')
-const fileType = require('file-type')
-const stackBlur = require('./lib/stack-blur')
+const glur = require('glur')
 const blend = require('./lib/blend')
-const INTERPOLATION = require('./lib/resize')
 const MIME = require('./mime-types.json')
+const unsharp = require(/* pica */'./lib/unsharp')
+const resizeArray = require(/* pica */'./lib/resize-array')
+const { hsvToRgb, hslToRgb, rgbToHsl, rgbToHsv } = require('./lib/color-conversion-algorithms')
 
-INTERPOLATION.nearest = require('./lib/nearest-neighbor')
-
-const readFile = pify(fs.readFile)
-const writeFile = pify(fs.writeFile)
-
-// from PNGJS
-function bitblt (srcData, srcWidth, dstData, dstWidth, srcX, srcY, width, height, deltaX, deltaY) {
-  for (let y = 0; y < height; y++) {
-    srcData.copy(dstData,
-      ((deltaY + y) * dstWidth + deltaX) * 4,
-      ((srcY + y) * srcWidth + srcX) * 4,
-      ((srcY + y) * srcWidth + srcX + width) * 4
-    )
-  }
+const INTERPOLATION = {
+  lanczos3: resizeArray.lanczos3,
+  lanczos2: resizeArray.lanczos2,
+  hamming: resizeArray.hamming,
+  nearest: require('./lib/nearest-neighbor')
 }
 
+function clamp (n, min, max) {
+  if (n < min) n = min
+  else if (n > max) n = max
+  return n
+}
+
+function def (object, properties) {
+  const descriptors = {}
+  for (let name in properties) {
+    descriptors[name] = {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: properties[name]
+    }
+  }
+  return Object.defineProperties(object, descriptors)
+}
+
+const NO_DATA = {}
 const AUTO = {}
-const ALLOC_UNSAFE = {}
 
 class PixMap {
 
-  constructor (width, height, fill) {
-    this.width = width | 0
-    this.height = height | 0
+  constructor (width, height) {
+    if (width === NO_DATA) return
 
-    if (this.width > 0 && this.height > 0) {
-      if (fill === ALLOC_UNSAFE) {
-        this.data = Buffer.allocUnsafe(4 * this.width * this.height)
-      } else {
-        this.data = Buffer.alloc(4 * this.width * this.height, fill)
-      }
+    width = Math.round(width | 0)
+    height = Math.round(height | 0)
+
+    if (width <= 0 || height <= 0) throw new Error('width and height must be > 0')
+
+    def(this, {
+      width: width,
+      height: height,
+      data: new Uint8ClampedArray(width * height * 4)
+    })
+  }
+
+  select (x = 0, y = 0, w = this.width, h = this.height) {
+    const height = this.height
+    const width = this.width
+
+    let x2 = clamp(x + w, 0, width)
+    let y2 = clamp(y + h, 0, height)
+
+    x = clamp(x, 0, width)
+    y = clamp(y, 0, height)
+
+    if (x === x2 || y === y2) return null
+
+    const rect = [[], []]
+
+    if (x < x2) {
+      rect[0][0] = x
+      rect[1][0] = x2
+    } else if (x > x2) {
+      rect[0][0] = x2
+      rect[1][0] = x
     }
-  }
 
-  * [Symbol.iterator] () {
-    const w = this.width
-    const h = this.height
-    const data = this.data
-
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let idx = (w * y + x) * 4
-        yield { x, y, color: data.slice(idx, idx + 4) }
-      }
+    if (y < y2) {
+      rect[0][1] = y
+      rect[1][1] = y2
+    } else if (y > y2) {
+      rect[0][1] = y2
+      rect[1][1] = y
     }
+
+    return rect
   }
 
-  * rect (sx = 0, sy = 0, width = this.width, height = this.height) {
-    // todo: CLAMP
-    const w = this.width
-    const ex = sx + width
-    const ey = sy + height
-    const data = this.data
-
-    for (let y = sy; y < ey; y++) {
-      for (let x = sx; x < ex; x++) {
-        let idx = (w * y + x) * 4
-        yield { x, y, color: data.slice(idx, idx + 4) }
-      }
-    }
-  }
-
-  crop (sx, sy, width, height) {
-    // todo: CLAMP
-    const pix = new PixMap(width, height, ALLOC_UNSAFE)
-    bitblt(this.data, this.width, pix.data, pix.width, sx, sy, width, height, 0, 0)
-    return pix
-  }
-
-  mask (src, dx, dy) {
-    // dx |= 0
-    // dy |= 0
-
-    // for (let { x, y, color } of src.rect(0, 0, this.width - dx, this.height - dy)) {
-    //   let avg = (color[0] + color[1] + color[2]) / 3
-    //   let f = avg / 255
-    //   let dest = this.getPixel(dx + x, dy + y)
-    //   dest[3] *= f
-    // }
-    // return this
-  }
-
-  getPixelIndex (x, y) {
-    x = Math.round(x)
-    y = Math.round(y)
-
+  getPixelOffset (x, y) {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null
-
     return (this.width * y + x) * 4
   }
 
-  getPixel (x, y) {
-    let idx = this.getPixelIndex(x, y)
+  setPixel/* RGB(A) */ (x, y, src, offset = 0) {
+    let idx = this.getPixelOffset(x, y)
     if (idx == null) return null
-    return this.data.slice(idx, idx + 4)
+    let data = this.data
+    let len = Math.min(src.length - offset, 4) // cutoff at 4
+    for (let i = 0; i < len; i++) data[idx + i] = src[offset + i]
+    return this
   }
 
-  getLine (y) {
-    y = Math.round(y)
-    if (y < 0 || y >= this.height) return null
-
-    let idx = (this.width * y) * 4
-    return this.data.slice(idx, idx + (this.width * 4))
+  setPixelHSV (x, y, src, offset = 0) {
+    let idx = this.getPixelOffset(x, y)
+    if (idx == null) return null
+    let data = this.data
+    hsvToRgb(src, offset, data, idx)
+    return this
   }
 
-  clone () {
-    const pix = new PixMap(this.width, this.height, ALLOC_UNSAFE)
-    this.data.copy(pix.data)
+  setPixelHSB (x, y, src, offset = 0) {
+    let idx = this.getPixelOffset(x, y)
+    if (idx == null) return null
+    let data = this.data
+    hslToRgb(src, offset, data, idx)
+    return this
+  }
+
+  scan (handle, dx = 0, dy = 0, w = this.width - dx, h = this.height - dy) {
+    let selection = this.select(dx, dy, w, h)
+    if (!selection) return this
+    const [ [sx, sy], [ex, ey] ] = selection
+
+    const data = this.data
+    const width = this.width
+
+    let broken
+    let index, x, y
+
+    for (y = sy; y < ey; y++) {
+      for (x = sx; x < ex; x++) {
+        index = (width * y + x) * 4
+        let res = handle.call(this, x, y, index, data)
+        if (res === false) {
+          broken = true
+          break
+        }
+      }
+      if (broken) break
+    }
+
+    return this
+  }
+
+  crop (dx, dy, w, h) {
+    let selection = this.select(dx, dy, w, h)
+    if (!selection) return this.clone()
+
+    const [ [sx, sy], [ex, ey] ] = selection
+
+    const width = ex - sx
+    const height = ey - sy
+
+    const pix = new PixMap(width, height)
+
+    const tw = this.width
+    const pd = pix.data
+    const td = this.data
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let tidx = (tw * (y + sy) + (x + sx)) * 4
+        let pidx = (width * y + x) * 4
+        for (let i = 0; i < 4; i++) pd[pidx + i] = td[tidx + i]
+      }
+    }
+
     return pix
   }
 
-  compose (pix, dx, dy, blendMode, amount) {
-    // todo: CLAMP
-    dx = Math.round(dx)
-    dy = Math.round(dy)
+  mask (pix, dx, dy) {
+    let selection = this.select(dx, dy, pix.width, pix.height)
+    if (!selection) return this
+
+    const [ [sx, sy], [ex, ey] ] = selection
+
+    let sdata = pix.data
+    let ddata = this.data
+
+    for (let y = sy; y < ey; y++) {
+      for (let x = sx; x < ex; x++) {
+        let delta1 = pix.getPixelOffset(x - sx, y - sy)
+        let delta2 = this.getPixelOffset(x, y)
+        let avg = (sdata[ delta1 ] + sdata[delta1 + 1] + sdata[delta1 + 2]) / 3
+        let f = avg / 255
+        ddata[delta2 + 3] *= f
+      }
+    }
+
+    return this
+  }
+
+  getLine (y) {
+    if (y < 0 || y >= this.height) return null
+
+    let idx = (this.width * y) * 4
+    return this.data.subarray(idx, idx + (this.width * 4))
+  }
+
+  clone () {
+    const pix = new PixMap(NO_DATA)
+    def(pix, {
+      width: this.width,
+      height: this.height,
+      data: Uint8ClampedArray.from(this.data)
+    })
+    return pix
+  }
+
+  blend (pix, dx, dy, blendMode, amount) {
+    let selection = this.select(dx, dy, pix.width, pix.height)
+    if (!selection) return this
+    const [ [sx, sy], [ex, ey] ] = selection
 
     if (!blendMode) blendMode = blend.MODES.normal
 
-    // todo: CLAMP
-    const w = pix.width
-    const h = pix.height
+    let src = pix.data
+    let dst = this.data
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let delta1 = pix.getPixelIndex(x, y)
-        let delta2 = this.getPixelIndex(dx + x, dy + y)
-        blend(pix.data, this.data, blendMode, amount, delta1, delta2)
+    for (let y = sy; y < ey; y++) {
+      for (let x = sx; x < ex; x++) {
+        let ds = pix.getPixelOffset(x - sx, y - sy)
+        let dd = this.getPixelOffset(x, y)
+        blend(src, dst, blendMode, amount, ds, dd)
+      }
+    }
+
+    return this
+  }
+
+  copy (pix, dx, dy) {
+    let selection = this.select(dx, dy, pix.width, pix.height)
+    if (!selection) return this
+    const [ [sx, sy], [ex, ey] ] = selection
+
+    let src = pix.data
+    let dst = this.data
+
+    for (let y = sy; y < ey; y++) {
+      for (let x = sx; x < ex; x++) {
+        let ds = pix.getPixelOffset(x - sx, y - sy)
+        let dd = this.getPixelOffset(x, y)
+        for (let i = 0; i < 4; i++) dst[dd + i] = src[ds + i]
       }
     }
 
@@ -144,13 +249,16 @@ class PixMap {
   }
 
   blur (radius) {
-    stackBlur(this.width, this.height, this.data, radius)
+    glur(this.data, this.width, this.height, radius)
+    return this
+  }
+
+  unsharp (amount, radius, threshold) {
+    unsharp(this.data, this.width, this.height, amount, radius, threshold)
     return this
   }
 
   resize (width, height, interpolation) {
-    const pix = new PixMap()
-
     if (width === AUTO) {
       let ratio = this.width / this.height
       width = Math.round(height * ratio)
@@ -159,152 +267,77 @@ class PixMap {
       height = Math.round(width * ratio)
     }
 
-    let interpolator = interpolation || INTERPOLATION.bilinear
-    pix.data = interpolator(this.data, this.width, this.height, width, height)
-    pix.width = width
-    pix.height = height
+    const pix = new PixMap(width, height)
+    let interpolator = interpolation || INTERPOLATION.lanczos3
+    interpolator(this.data, pix.data, this.width, this.height, width, height)
     return pix
   }
 
-  toBuffer (mime, options) {
-    const encoder = ENCODER[mime]
-    return Promise.resolve()
-    .then(() => {
-      if (encoder) return encoder(this.width, this.height, this.data, options)
-      throw new EncodeError(mime)
-    })
-  }
-
-  toFile (mime, path, options) {
-    return this.toBuffer(mime, options)
-    .then((buffer) => {
-      return writeFile(path, buffer)
-    })
-  }
-
 }
 
-function getMime (chunk) {
-  let type = fileType(chunk)
-  if (type) {
-    return type.mime
-  } else if ((/^\s+?<svg|<xml/).test(chunk.toString())) { // try xml/svg
-    return 'image/svg'
-  }
-  throw new Error('unknown mime-type')
-}
+PixMap.decode = function (type, name, input, options) {
+  let decodeError = new Error(`cannot decode ${name} from ${type} type`)
 
-class EncodeError extends TypeError {
-  constructor (mime) {
-    super()
-    this.name = 'ENCODE_MIME_MISSING'
-    this.message = `missing encoder for ${mime}.`
-  }
-}
-
-class DecodeError extends TypeError {
-  constructor (mime) {
-    super()
-    this.name = 'DECODE_MIME_MISSING'
-    this.message = `missing decoder for ${mime}.`
-  }
-}
-
-class BufferError extends TypeError {
-  constructor (buffer) {
-    super()
-    this.name = 'NOT_A_BUFFER'
-    this.message = `${buffer} must be a buffer.`
-  }
-}
-
-function pixMap () {
-  return new PixMap(...arguments)
-}
-
-// ENCODE / DECODE api
-
-const ENCODER = pixMap.ENCODER = {}
-const DECODER = pixMap.DECODER = {}
-
-pixMap.register = (codecs) => {
-  for (let mime in codecs) {
-    let codec = codecs[mime]
-    if (codec.encode) ENCODER[mime] = codec.encode
-    if (codec.decode) DECODER[mime] = codec.decode
-  }
-}
-
-// parse result of decoders and create a PixMap object
-// or use this to create a pixmap object from non-file sources unknown to pixmap (Canvas ?)
-pixMap.raw = function (width, height, data) {
-  if (!Buffer.isBuffer(data)) throw new BufferError(data)
-  if (data.length !== width * height * 4) throw new Error(`invalid buffer, must be 32bpp`)
-
-  const pix = new PixMap()
-  pix.width = width
-  pix.height = height
-  pix.data = data
-  return pix
-}
-
-function createRaw ({ width, height, data }) { // for promises
-  return pixMap.raw(width, height, data)
-}
-
-pixMap.loadBufferAs = function (mime, buffer, options) {
-  // always return a promise.
-  // this way, decoder might return a promise, or it might be sync, and we don't care.
   return Promise.resolve()
   .then(() => {
-    if (!Buffer.isBuffer(buffer)) throw new BufferError(buffer)
-    let decoder = DECODER[mime]
-    if (!decoder) throw new DecodeError(mime)
-    return decoder(buffer, options)
+    let codec = CODEC[name]
+    if (!codec || !codec.decode) throw decodeError
+    let decoder = codec.decode[type]
+    if (!decoder) throw decodeError
+    return decoder(input, options)
   })
-  .then(createRaw)
+  .then(({ width, height, data }) => {
+    return PixMap.fromView(width, height, data)
+  })
 }
 
-// use this to create a PixMap object from buffers you get from files
-pixMap.loadBuffer = function (buffer, options) {
-  // always return a promise.
-  // this way, decoder might return a promise, or it might be sync, and we don't care.
+PixMap.prototype.encode = function (type, name, options) {
+  let encodeError = new Error(`cannot encode ${name} to ${type}`)
+
   return Promise.resolve()
   .then(() => {
-    if (!Buffer.isBuffer(buffer)) throw new BufferError(buffer)
-    let mime = getMime(buffer.slice(0, 4100))
-    return pixMap.loadBufferAs(mime, buffer, options)
+    const codec = CODEC[name]
+    if (!codec || !codec.encode) throw encodeError
+    const encoder = codec.encode[type]
+    if (!encoder) throw encodeError
+    return encoder(this.width, this.height, this.data, options)
   })
 }
 
-pixMap.loadFileAs = function (mime, file, options) {
-  let decoder
-  return Promise.resolve()
-  .then(() => {
-    decoder = DECODER[mime]
-    if (!decoder) throw new DecodeError(mime)
-    return readFile(file)
-  })
-  .then((buffer) => decoder(buffer, options))
-  .then(createRaw)
+const CODEC = PixMap.CODEC = {}
+
+PixMap.register = (codecs) => {
+  for (let name in codecs) {
+    let codec = codecs[name]
+    if (!CODEC[name]) CODEC[name] = { encode: {}, decode: {} }
+    for (let t in codec.encode) CODEC[name].encode[t] = codec.encode[t]
+    for (let t in codec.decode) CODEC[name].decode[t] = codec.decode[t]
+  }
 }
 
-// use this to create a PixMap object from files
-pixMap.loadFile = function (file, options) {
-  return readChunk(file, 0, 4100)
-  .then((chunk) => {
-    let mime = getMime(chunk)
-    return pixMap.loadFileAs(mime, file, options)
+// use this to create a pixmap object from non-file sources
+PixMap.fromView = function (width, height, data) {
+  if (!ArrayBuffer.isView(data)) throw new Error(`${data} must be an ArrayBuffer view`)
+  if (data.length !== width * height * 4) throw new Error(`data must be in 32bpp`)
+
+  const pix = new PixMap(NO_DATA)
+  return def(pix, {
+    width: width,
+    height: height,
+    // create a clamped view from the same underlying ArrayBuffer
+    data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength)
   })
 }
 
-// convenience constants
-pixMap.MIME = MIME
-pixMap.BLEND = blend.MODES
-pixMap.INTERPOLATION = INTERPOLATION
-pixMap.ALLOC_UNSAFE = ALLOC_UNSAFE
-pixMap.AUTO = AUTO
+// convenience
+PixMap.hsvToRgb = hsvToRgb
+PixMap.hslToRgb = hslToRgb
+PixMap.rgbToHsl = rgbToHsl
+PixMap.rgbToHsv = rgbToHsv
 
-pixMap.PixMap = PixMap
+PixMap.MIME = MIME
+PixMap.BLEND = blend.MODES
+PixMap.INTERPOLATION = INTERPOLATION
+PixMap.AUTO = AUTO
 
-module.exports = pixMap
+module.exports = PixMap

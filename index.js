@@ -1,6 +1,7 @@
 'use strict'
 
-const core = require('./core')
-core.register(require('./io/sharp'))
+const PixMap = require('./core')
+require('./io/node')
+PixMap.register(require('./codecs/sharp'))
 
-module.exports = core
+module.exports = PixMap

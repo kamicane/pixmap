@@ -2,17 +2,19 @@
   "name": "pixmap",
   "version": "0.0.1",
   "description": "pixel manipulation library",
-  "main": "index.js",
+  "main": "./index.js",
+  "browser": "./core.js",
   "author": "kamicane@gmail.com",
   "license": "MIT",
   "dependencies": {
-    "file-type": "^4.0.0",
-    "read-chunk": "^2.0.0"
+    "glur": "^1.1.2"
   },
   "devDependencies": {
     "standard": "^8.6.0"
   },
   "optionalDependencies": {
+    "read-chunk": "^2.0.0",
+    "file-type": "^4.0.0",
     "pngjs": "^3.0.0",
     "raw-body": "^2.2.0",
     "sharp": "^0.17.0"

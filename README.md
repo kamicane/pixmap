@@ -2,14 +2,10 @@
 
 *THIS PACKAGE IS NOT PUBLISHED YET. ADDING TO VERSION CONTROL BEFORE MY DRIVE BREAKS.*
 
-PixMap is a pixel manipulation library.
-It supports compositing pixmaps with SVG blending modes, resizing, blurring, cropping, masking, and, of course, direct pixel manipulation.
+PixMap is a pixel manipulation library, for node & browsers.
+It supports blending, resizing, blurring, cropping, masking, and, of course, direct pixel manipulation.
 
-PixMap works by delegating decoding and encoding image formats to third parties like [sharp](https://github.com/lovell/sharp) or [pngjs](https://github.com/lukeapage/pngjs).
-
-All buffer allocations are kept to a minimum. `allocUnsafe` is always used when pixels are going to get filled.
-
-NO BUFFERS WERE HARMED IN THE MAKING OF THIS JAVASCRIPT PROGRAM.
+PixMap works by delegating decoding and encoding of image formats to third parties like [sharp](https://github.com/lovell/sharp) or [pngjs](https://github.com/lukeapage/pngjs).
 
 # Installation
 
@@ -21,36 +17,49 @@ or
 npm install pixmap --save
 ```
 
-It is probably usable in browsers as well with [WebPack](https://webpack.github.io/) or [Browserify](http://browserify.org/) with some configuration (using [feross/buffer](https://github.com/feross/buffer)).
-
 # API
 
 ```js
 const PixMap = require('pixmap')
 ```
 
-## Creating PixMaps
+## Creating new PixMaps
 
 ```js
-let pix = PixMap(100, 100) // 100x100 transparent
-let pix = PixMap(100, 100, Buffer.from([255, 255, 255, 255])) // 100x100 white
-let pix = PixMap(100, 100, Buffer.from([0, 0, 0, 255])) // 100x100 black
+let pix = new PixMap(100, 100) // 100x100 transparent pixmap
+```
+
+### Properties
+
+```js
+pix.width // width of the pix
+pix.height // height of the pix
+pix.data // pixel data, Uint8ClampedArray
 ```
 
 ## I/O
 
-By default, `require('pixmap')` will give you PixMap with sharp codecs enabled (png, svg, jpeg, tiff, etc).
+By default, in node, `require('pixmap')` will give you PixMap with sharp codecs (png, svg, jpeg, tiff, etc).
 Supported sharp codecs are automatically calculated at runtime using [`sharp.format`](http://sharp.dimens.io/en/stable/api-constructor/#format).
 ```js
 const PixMap = require('pixmap')
-```
 
-Should you want to load codecs manually (for browser usage):
-```js
-const PixMap = require('pixmap/core')
-// register codecs manually
-PixMap.register(require('pixmap/io/pngjs')) // adds codecs for png (no gyp required)
-PixMap.register(require('pixmap/io/jpeg-js')) // adds codecs for jpeg (no gyp required)
+// get pngBuffer somehow
+PixMap.loadBuffer(pngBuffer).then((pix) => {
+  //...
+})
+
+PixMap.loadFile('path/to/file').then((pix) => {
+  //...
+})
+
+PixMap.toFile('image/png').then(() => {
+  console.log('saved.')
+})
+
+PixMap.toBuffer('image/png').then((pngBuffer) => {
+  // do stuff with pngBuffer
+})
 ```
 
 ### Input
@@ -71,17 +80,20 @@ fs.readFile('./path/to/image.png', (buffer) => {
 })
 ```
 When reading from file or buffer, the [file-type](https://github.com/sindresorhus/file-type) of the file or buffer is used to get the proper
-codec and return a raw PixMap.
+codec and return a new PixMap.
 
 If you want to feed PixMap with a raw buffer of decoded pixels, you can use
 ```js
-let pix = PixMap.raw(width, height, buffer)
+let pix = PixMap.fromView(width, height, arrayView)
 ```
 for example:
 ```js
-let canvasBuffer = Buffer.from(ctx.getImageData(0, 0, canvas.width, canvas.height))
-let pix = PixMap.raw(canvas.width, canvas.height, canvasBuffer)
+let imageData = canvas.getContext('2d').getImageData()
+let pix = PixMap.fromView(imageData.width, imageData.height, imageData.data)
 ```
+
+PixMap will always favor referencing the original ArrayBuffer rather than copying it, whenever possible (e.g. same number of channels.),
+so for instance, in the example above, modifying the PixMap pixels will also modify the imageData pixels.
 
 ### Output
 
@@ -114,52 +126,7 @@ PixMap.MIME.webp === 'image/webp'
 ```
 
 ## Iterating over PixMaps
-
-Iterating over pixmaps (with es2015 iterators)
-```js
-for (let { x, y, color } of pix) {
-  let red   = color[0]
-  let green = color[1]
-  let blue  = color[2]
-  let alpha = color[3]
-  console.log(x, y, `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`)
-}
-```
-Iterating over an area of a PixMap (with es2015 iterators)
-```js
-for (let { x, y, color } of pix.rect(25, 25, 50, 50)) {
-  let red   = color[0]
-  let green = color[1]
-  let blue  = color[2]
-  let alpha = color[3]
-  console.log(x, y, `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`)
-}
-```
-Old-school Iteration
-```js
-for (let y = 0; y < pix.height; y++) {
-  for (let x = 0; x < pix.width; x++) {
-    let idx   = (pix.width * y + x) << 2
-    let color = pix.data.slice(idx, idx + 4)
-
-    let red   = color[0]
-    let green = color[1]
-    let blue  = color[2]
-    let alpha = color[3]
-    console.log(x, y, `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`)
-  }
-}
-```
-Make a black rectangle over someone's ugly face
-```js
-for (let { x, y, color } of pix.rect(25, 25, 50, 50)) {
-  color[0] = 0
-  color[1] = 0
-  color[2] = 0
-  color[3] = 255
-}
-```
-
+todoc
 ## Compositing
 todoc
 ## Cropping
