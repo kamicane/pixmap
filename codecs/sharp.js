@@ -6,15 +6,15 @@ const MIME = require('../mime-types.json')
 const SHARP_FORMATS = sharp.format
 
 for (let id in MIME) { // cross reference with PixMap known mimes to get valid mime-types
-  let format = SHARP_FORMATS[id]
+  const format = SHARP_FORMATS[id]
   if (!format) continue // continue if there is no such type in sharp (should always be there)
 
-  const codec = { encode: {}, decode: {} }
+  const codec = {}
 
-  if (format.output.buffer) codec.encode.buffer = createEncoder(id)
-  if (format.input.buffer) codec.decode.buffer = decoder
+  if (format.output.buffer) codec.encode = createEncoder(id)
+  if (format.input.buffer) codec.decode = decoder
 
-  let mime = MIME[id]
+  const mime = MIME[id]
   exports[mime] = codec
 }
 
@@ -25,7 +25,7 @@ function decoder (buffer) {
         reject(err)
       } else {
         if (channels === 3) { // fill out alpha channel if missing
-          let clone = Buffer.allocUnsafe(width * height * 4)
+          const clone = Buffer.allocUnsafe(width * height * 4)
           for (let i = 0, p = 0, l = buffer.length; i < l; i += channels, p += 4) {
             for (let j = 0; j < channels; j++) clone[p + j] = buffer[i + j]
             clone[p + 3] = 255
@@ -47,7 +47,7 @@ function createEncoder (type) {
   return function (width, height, data, options) {
     return new Promise((resolve, reject) => {
       // create a Buffer that shares memory with PixMap's Uint8ClampedArray
-      let buffer = Buffer.from(data.buffer)
+      const buffer = Buffer.from(data.buffer)
       sharp(buffer, { raw: { width: width, height: height, channels: 4 } }).toFormat(type, options).toBuffer((err, buffer) => {
         if (err) reject(err)
         else resolve(buffer)

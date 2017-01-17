@@ -54,12 +54,12 @@ class PixMap {
     })
   }
 
-  select (x = 0, y = 0, w = this.width, h = this.height) {
+  rect (x = 0, y = 0, w = this.width - x, h = this.height - y) {
     const height = this.height
     const width = this.width
 
-    let x2 = clamp(x + w, 0, width)
-    let y2 = clamp(y + h, 0, height)
+    const x2 = clamp(x + w, 0, width)
+    const y2 = clamp(y + h, 0, height)
 
     x = clamp(x, 0, width)
     y = clamp(y, 0, height)
@@ -88,50 +88,49 @@ class PixMap {
   }
 
   getPixelOffset (x, y) {
-    if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null
-    return (this.width * y + x) * 4
+    const width = this.width
+    const height = this.height
+    if (x < 0 || x >= width || y < 0 || y >= height) return null
+    return (width * y + x) * 4
   }
 
   setPixel/* RGB(A) */ (x, y, src, offset = 0) {
-    let idx = this.getPixelOffset(x, y)
+    const idx = this.getPixelOffset(x, y)
     if (idx == null) return null
-    let data = this.data
-    let len = Math.min(src.length - offset, 4) // cutoff at 4
+    const data = this.data
+    const len = Math.min(src.length - offset, 4) // cutoff at 4
     for (let i = 0; i < len; i++) data[idx + i] = src[offset + i]
     return this
   }
 
   setPixelHSV (x, y, src, offset = 0) {
-    let idx = this.getPixelOffset(x, y)
+    const idx = this.getPixelOffset(x, y)
     if (idx == null) return null
-    let data = this.data
-    hsvToRgb(src, offset, data, idx)
+    hsvToRgb(src, offset, this.data, idx)
     return this
   }
 
   setPixelHSB (x, y, src, offset = 0) {
-    let idx = this.getPixelOffset(x, y)
+    const idx = this.getPixelOffset(x, y)
     if (idx == null) return null
-    let data = this.data
-    hslToRgb(src, offset, data, idx)
+    hslToRgb(src, offset, this.data, idx)
     return this
   }
 
-  scan (handle, dx = 0, dy = 0, w = this.width - dx, h = this.height - dy) {
-    let selection = this.select(dx, dy, w, h)
-    if (!selection) return this
-    const [ [sx, sy], [ex, ey] ] = selection
+  scan (handle, dx, dy, w, h) {
+    const rect = this.rect(dx, dy, w, h)
+    if (!rect) return this
+    const [ [sx, sy], [ex, ey] ] = rect
 
     const data = this.data
     const width = this.width
 
     let broken
-    let index, x, y
 
-    for (y = sy; y < ey; y++) {
-      for (x = sx; x < ex; x++) {
-        index = (width * y + x) * 4
-        let res = handle.call(this, x, y, index, data)
+    for (let y = sy; y < ey; y++) {
+      for (let x = sx; x < ex; x++) {
+        const index = (width * y + x) * 4
+        const res = handle.call(this, x, y, index, data)
         if (res === false) {
           broken = true
           break
@@ -144,10 +143,10 @@ class PixMap {
   }
 
   crop (dx, dy, w, h) {
-    let selection = this.select(dx, dy, w, h)
-    if (!selection) return this.clone()
+    const rect = this.rect(dx, dy, w, h)
+    if (!rect) return this.clone()
 
-    const [ [sx, sy], [ex, ey] ] = selection
+    const [ [sx, sy], [ex, ey] ] = rect
 
     const width = ex - sx
     const height = ey - sy
@@ -160,8 +159,8 @@ class PixMap {
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        let tidx = (tw * (y + sy) + (x + sx)) * 4
-        let pidx = (width * y + x) * 4
+        const tidx = (tw * (y + sy) + (x + sx)) * 4
+        const pidx = (width * y + x) * 4
         for (let i = 0; i < 4; i++) pd[pidx + i] = td[tidx + i]
       }
     }
@@ -170,32 +169,29 @@ class PixMap {
   }
 
   mask (pix, dx, dy) {
-    let selection = this.select(dx, dy, pix.width, pix.height)
-    if (!selection) return this
+    const pw = pix.width
+    const ph = pix.height
+    const w = this.width
 
-    const [ [sx, sy], [ex, ey] ] = selection
+    const rect = this.rect(dx, dy, pw, ph)
+    if (!rect) return this
 
-    let sdata = pix.data
-    let ddata = this.data
+    const [ [sx, sy], [ex, ey] ] = rect
+
+    const sdata = pix.data
+    const ddata = this.data
 
     for (let y = sy; y < ey; y++) {
       for (let x = sx; x < ex; x++) {
-        let delta1 = pix.getPixelOffset(x - sx, y - sy)
-        let delta2 = this.getPixelOffset(x, y)
-        let avg = (sdata[ delta1 ] + sdata[delta1 + 1] + sdata[delta1 + 2]) / 3
-        let f = avg / 255
+        const delta1 = (pw * (y - sy) + (x - sx)) * 4
+        const delta2 = (w * y + x) * 4
+        const avg = (sdata[ delta1 ] + sdata[delta1 + 1] + sdata[delta1 + 2]) / 3
+        const f = avg / 255
         ddata[delta2 + 3] *= f
       }
     }
 
     return this
-  }
-
-  getLine (y) {
-    if (y < 0 || y >= this.height) return null
-
-    let idx = (this.width * y) * 4
-    return this.data.subarray(idx, idx + (this.width * 4))
   }
 
   clone () {
@@ -209,19 +205,23 @@ class PixMap {
   }
 
   blend (pix, dx, dy, blendMode, amount) {
-    let selection = this.select(dx, dy, pix.width, pix.height)
-    if (!selection) return this
-    const [ [sx, sy], [ex, ey] ] = selection
+    const pw = pix.width
+    const ph = pix.height
+    const w = this.width
+
+    const rect = this.rect(dx, dy, pw, ph)
+    if (!rect) return this
+    const [ [sx, sy], [ex, ey] ] = rect
 
     if (!blendMode) blendMode = blend.MODES.normal
 
-    let src = pix.data
-    let dst = this.data
+    const src = pix.data
+    const dst = this.data
 
     for (let y = sy; y < ey; y++) {
       for (let x = sx; x < ex; x++) {
-        let ds = pix.getPixelOffset(x - sx, y - sy)
-        let dd = this.getPixelOffset(x, y)
+        const ds = (pw * (y - sy) + (x - sx)) * 4
+        const dd = (w * y + x) * 4
         blend(src, dst, blendMode, amount, ds, dd)
       }
     }
@@ -230,17 +230,21 @@ class PixMap {
   }
 
   copy (pix, dx, dy) {
-    let selection = this.select(dx, dy, pix.width, pix.height)
-    if (!selection) return this
-    const [ [sx, sy], [ex, ey] ] = selection
+    const pw = pix.width
+    const ph = pix.height
+    const w = this.width
 
-    let src = pix.data
-    let dst = this.data
+    const rect = this.rect(dx, dy, pw, ph)
+    if (!rect) return this
+    const [ [sx, sy], [ex, ey] ] = rect
+
+    const src = pix.data
+    const dst = this.data
 
     for (let y = sy; y < ey; y++) {
       for (let x = sx; x < ex; x++) {
-        let ds = pix.getPixelOffset(x - sx, y - sy)
-        let dd = this.getPixelOffset(x, y)
+        const ds = (pw * (y - sy) + (x - sx)) * 4
+        const dd = (w * y + x) * 4
         for (let i = 0; i < 4; i++) dst[dd + i] = src[ds + i]
       }
     }
@@ -275,47 +279,6 @@ class PixMap {
 
 }
 
-PixMap.decode = function (type, name, input, options) {
-  let decodeError = new Error(`cannot decode ${name} from ${type} type`)
-
-  return Promise.resolve()
-  .then(() => {
-    let codec = CODEC[name]
-    if (!codec || !codec.decode) throw decodeError
-    let decoder = codec.decode[type]
-    if (!decoder) throw decodeError
-    return decoder(input, options)
-  })
-  .then(({ width, height, data }) => {
-    return PixMap.fromView(width, height, data)
-  })
-}
-
-PixMap.prototype.encode = function (type, name, options) {
-  let encodeError = new Error(`cannot encode ${name} to ${type}`)
-
-  return Promise.resolve()
-  .then(() => {
-    const codec = CODEC[name]
-    if (!codec || !codec.encode) throw encodeError
-    const encoder = codec.encode[type]
-    if (!encoder) throw encodeError
-    return encoder(this.width, this.height, this.data, options)
-  })
-}
-
-const CODEC = PixMap.CODEC = {}
-
-PixMap.register = (codecs) => {
-  for (let name in codecs) {
-    let codec = codecs[name]
-    if (!CODEC[name]) CODEC[name] = { encode: {}, decode: {} }
-    for (let t in codec.encode) CODEC[name].encode[t] = codec.encode[t]
-    for (let t in codec.decode) CODEC[name].decode[t] = codec.decode[t]
-  }
-}
-
-// use this to create a pixmap object from non-file sources
 PixMap.fromView = function (width, height, data) {
   if (!ArrayBuffer.isView(data)) throw new Error(`${data} must be an ArrayBuffer view`)
   if (data.length !== width * height * 4) throw new Error(`data must be in 32bpp`)
@@ -325,7 +288,7 @@ PixMap.fromView = function (width, height, data) {
     width: width,
     height: height,
     // create a clamped view from the same underlying ArrayBuffer
-    data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength)
+    data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.length)
   })
 }
 

@@ -3,9 +3,9 @@
 const PNG = require('pngjs').PNG
 const raw = require('raw-body')
 
-let codec = exports['image/png'] = { encode: {}, decode: {} }
+let codec = exports['image/png'] = {}
 
-codec.decode.buffer = function (buffer) {
+codec.decode = function (buffer) {
   return new Promise((resolve, reject) => {
     new PNG().parse(buffer, (err, png) => {
       if (err) {
@@ -19,7 +19,7 @@ codec.decode.buffer = function (buffer) {
   })
 }
 
-codec.encode.buffer = function (width, height, data, options) {
+codec.encode = function (width, height, data, options) {
   // make sure width / height are not set in options otherwise PNG.js creates an useless buffer
   options = Object.assign({}, options, { width: 0, height: 0 })
 
