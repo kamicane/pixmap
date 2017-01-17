@@ -103,14 +103,14 @@ class PixMap {
     return this
   }
 
-  setPixelHSV (x, y, src, offset = 0) {
+  setPixelHsv (x, y, src, offset = 0) {
     const idx = this.getPixelOffset(x, y)
     if (idx == null) return null
     hsvToRgb(src, offset, this.data, idx)
     return this
   }
 
-  setPixelHSB (x, y, src, offset = 0) {
+  setPixelHsl (x, y, src, offset = 0) {
     const idx = this.getPixelOffset(x, y)
     if (idx == null) return null
     hslToRgb(src, offset, this.data, idx)
