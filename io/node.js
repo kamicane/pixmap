@@ -12,7 +12,7 @@ const writeFile = pify(fs.writeFile)
 
 const CODEC = PixMap.CODEC = {}
 
-PixMap.register = (codecs) => {
+PixMap.register = function (codecs) {
   for (let name in codecs) {
     const codec = codecs[name]
     if (!CODEC[name]) CODEC[name] = {}
@@ -57,7 +57,6 @@ function getMime (chunk) {
   throw new Error('unknown mime-type')
 }
 
-// use this to create a PixMap object from buffers you get from files
 PixMap.loadBuffer = function (buffer, options) {
   return Promise.resolve()
   .then(() => {
@@ -67,19 +66,18 @@ PixMap.loadBuffer = function (buffer, options) {
   })
 }
 
-const loadFileAs = function (mime, file, options) {
+const decodeFile = function (mime, file, options) {
   return readFile(file)
   .then((buffer) => {
     return decodeBuffer(mime, buffer, options)
   })
 }
 
-// use this to create a PixMap object from files
 PixMap.loadFile = function (file, options) {
   return readChunk(file, 0, 4100)
   .then((chunk) => {
     const mime = getMime(chunk)
-    return loadFileAs(mime, file, options)
+    return decodeFile(mime, file, options)
   })
 }
 
@@ -89,8 +87,8 @@ PixMap.prototype.toBuffer = function (mime, options) {
 
 PixMap.prototype.toFile = function (mime, filePath, options) {
   return this.toBuffer(mime, options)
-  .then((data) => {
-    return writeFile(filePath, data)
+  .then((buffer) => {
+    return writeFile(filePath, buffer)
   })
 }
 
