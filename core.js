@@ -8,11 +8,14 @@ const unsharp = require(/* pica */'./lib/unsharp')
 const resizeArray = require(/* pica */'./lib/resize-array')
 const { hsvToRgb, hslToRgb, rgbToHsl, rgbToHsv } = require('./lib/color-conversion-algorithms')
 
+let resize = require('./lib/resize')
+
 const INTERPOLATION = {
   lanczos3: resizeArray.lanczos3,
   lanczos2: resizeArray.lanczos2,
   hamming: resizeArray.hamming,
-  nearest: require('./lib/nearest-neighbor')
+  nearest: resize.nearest,
+  bilinear: resize.bilinear
 }
 
 function clamp (n, min, max) {
@@ -95,25 +98,32 @@ class PixMap {
   }
 
   setPixel/* RGB(A) */ (x, y, src, offset = 0) {
-    const idx = this.getPixelOffset(x, y)
-    if (idx == null) return null
+    const off = this.getPixelOffset(x, y)
+    if (off == null) return null
     const data = this.data
     const len = Math.min(src.length - offset, 4) // cutoff at 4
-    for (let i = 0; i < len; i++) data[idx + i] = src[offset + i]
+    for (let i = 0; i < len; i++) data[off + i] = src[offset + i]
     return this
   }
 
   setPixelHsv (x, y, src, offset = 0) {
-    const idx = this.getPixelOffset(x, y)
-    if (idx == null) return null
-    hsvToRgb(src, offset, this.data, idx)
+    const off = this.getPixelOffset(x, y)
+    if (off == null) return null
+    hsvToRgb(src, offset, this.data, off)
     return this
   }
 
   setPixelHsl (x, y, src, offset = 0) {
-    const idx = this.getPixelOffset(x, y)
-    if (idx == null) return null
-    hslToRgb(src, offset, this.data, idx)
+    const off = this.getPixelOffset(x, y)
+    if (off == null) return null
+    hslToRgb(src, offset, this.data, off)
+    return this
+  }
+
+  blendPixel (x, y, src, offset = 0, blendMode, amount) {
+    const off = this.getPixelOffset(x, y)
+    if (off == null) return null
+    blend(src, offset, this.data, off, blendMode || blend.MODES.normal, amount)
     return this
   }
 
@@ -222,7 +232,7 @@ class PixMap {
       for (let x = sx; x < ex; x++) {
         const ds = (pw * (y - sy) + (x - sx)) * 4
         const dd = (w * y + x) * 4
-        blend(src, dst, blendMode, amount, ds, dd)
+        blend(src, ds, dst, dd, blendMode, amount)
       }
     }
 

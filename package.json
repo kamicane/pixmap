@@ -7,16 +7,17 @@
   "author": "kamicane@gmail.com",
   "license": "MIT",
   "dependencies": {
+    "gl-matrix": "^2.3.2",
     "glur": "^1.1.2"
   },
   "devDependencies": {
     "standard": "^8.6.0"
   },
   "optionalDependencies": {
-    "read-chunk": "^2.0.0",
     "file-type": "^4.0.0",
     "pngjs": "^3.0.0",
     "raw-body": "^2.2.0",
+    "read-chunk": "^2.0.0",
     "sharp": "^0.17.0"
   }
 }
