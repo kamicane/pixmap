@@ -8,14 +8,11 @@ const unsharp = require(/* pica */'./lib/unsharp')
 const resizeArray = require(/* pica */'./lib/resize-array')
 const { hsvToRgb, hslToRgb, rgbToHsl, rgbToHsv } = require('./lib/color-conversion-algorithms')
 
-let resize = require('./lib/resize')
-
 const INTERPOLATION = {
   lanczos3: resizeArray.lanczos3,
   lanczos2: resizeArray.lanczos2,
   hamming: resizeArray.hamming,
-  nearest: resize.nearest,
-  bilinear: resize.bilinear
+  nearest: resizeArray.nearest
 }
 
 function clamp (n, min, max) {
